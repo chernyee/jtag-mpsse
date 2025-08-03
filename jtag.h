@@ -24,7 +24,7 @@ typedef uint8_t u8;
 
 typedef struct jtag_handle JTAG;
 
-JTAG *jtag_open(void);
+JTAG *jtag_open(u32 vid, u32 pid, u32 iface);
 void jtag_close(JTAG *jtag);
 
 int jtag_enumerate(JTAG *jtag);

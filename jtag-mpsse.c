@@ -80,9 +80,11 @@ struct jtag_handle {
 
 	u32 active_irsize;
 	u32 active_idcode;
+
+	u32 iface;
 };
 
-static int usb_open(JTAG *jtag, unsigned vid, unsigned pid) {
+static int usb_open(JTAG *jtag, unsigned vid, unsigned pid, unsigned iface) {
 	struct libusb_device_handle *udev;
 
 	if (libusb_init(NULL) < 0)
@@ -93,15 +95,16 @@ static int usb_open(JTAG *jtag, unsigned vid, unsigned pid) {
 		return -1;
 	}
 
-	libusb_detach_kernel_driver(udev, 0);
+	libusb_detach_kernel_driver(udev, iface);
 
-	if (libusb_claim_interface(udev, 0) < 0) {
+	if (libusb_claim_interface(udev, iface) < 0) {
 		fprintf(stderr,"cannot claim interface\n");
 		return -1;
 	}
 	jtag->udev = udev;
 	jtag->ep_in = 0x81;
 	jtag->ep_out = 0x02;
+	jtag->iface = iface;
 	return 0;
 }
 
@@ -411,6 +414,14 @@ static int jtag_shift_ir(JTAG *jtag, int count, u64 bits,
 
 
 void jtag_close(JTAG *jtag) {
+	if (jtag) {
+		return;
+	}
+
+	libusb_release_interface(jtag->udev, jtag->iface);
+	libusb_attach_kernel_driver(jtag->udev, jtag->iface);
+	libusb_close(jtag->udev);
+	free(jtag);
 }
 
 static unsigned char mpsse_init[] = {
@@ -421,7 +432,7 @@ static unsigned char mpsse_init[] = {
 	0x82, 0x20, 0x30, // set high state and dir
 };
 
-JTAG *jtag_open(void) {
+JTAG *jtag_open(u32 vid, u32 pid, u32 iface) {
 	int r;
 	JTAG *jtag = malloc(sizeof(JTAG));
 	if (!jtag)
@@ -429,7 +440,7 @@ JTAG *jtag_open(void) {
 	memset(jtag, 0, sizeof(JTAG));
 	jtag->read_size = sizeof(jtag->read_buffer);
 
-	r = usb_open(jtag, 0x0403, 0x6010);
+	r = usb_open(jtag, vid, pid, iface);
 	if (r < 0)
 		goto fail;
 	if (ftdi_reset(jtag->udev))
@@ -443,7 +454,7 @@ JTAG *jtag_open(void) {
 
 fail:
 	jtag_close(jtag);
-	free(jtag);
+	// free(jtag);
 	return NULL;
 }
 
