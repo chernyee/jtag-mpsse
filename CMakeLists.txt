@@ -17,7 +17,7 @@ set(LIB_SOURCES "jtag-mpsse.c")
 
 add_library(jtagmpsse STATIC ${LIB_SOURCES})
 set_target_properties(jtagmpsse PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(jtagmpsse PRIVATE ${LIBUSB})
+target_link_libraries(jtagmpsse PRIVATE ${LIBUSB_LIBRARIES})
 
 # Optionally, specify public headers
 target_include_directories(jtagmpsse PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
