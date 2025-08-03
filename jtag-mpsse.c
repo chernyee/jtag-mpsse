@@ -529,6 +529,10 @@ okay:
 	return jtag->dev_count;
 }
 
+u32 jtag_get_nth_idcode(JTAG *jtag, u32 n) {
+	return n < jtag->dev_count ? jtag->dev_idcode[n] : 0;
+}
+
 int jtag_select(JTAG *jtag, u32 idcode) {
 	u32 irsize = 0;
 	u32 ir_pre = 0;
