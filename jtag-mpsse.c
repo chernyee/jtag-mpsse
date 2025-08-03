@@ -499,7 +499,9 @@ int jtag_enumerate(JTAG *jtag) {
 			goto okay;
 		}
 	}
+#if TRACE_JTAG
 	fprintf(stderr,"jtag: more than %d devices?!\n", DEVICE_MAX);
+#endif
 	return -1;
 
 okay:
