@@ -30,17 +30,22 @@ struct device_info {
 	const char *name;
 };
 
-#define ZYNQID(code)	((0x1B<<21)|(0x9<<17)|((code)<<12)|(0x49<<1)|1)
-#define ZYNQMASK	0x0FFFFFFF
+// #define ZYNQID(code)	((0x1B<<21)|(0x9<<17)|((code)<<12)|(0x49<<1)|1)
+// #define ZYNQMASK	0x0FFFFFFF
+#define THREE_MHZ 3000000
+#define SIX_MHZ 6000000
+#define TWELVE_MHZ 12000000
+#define SIXTY_MHZ 60000000
 
 struct device_info LIBRARY[] = {
-	{ 0x4ba00477, 0xFFFFFFFF, 4, "Cortex A9" },
-	{ ZYNQID(0x02), ZYNQMASK, 6, "xc7x010" },
-	{ ZYNQID(0x1b), ZYNQMASK, 6, "xc7x015" },
-	{ ZYNQID(0x07), ZYNQMASK, 6, "xc7x020" },
-	{ ZYNQID(0x0c), ZYNQMASK, 6, "xc7x030" },
-	{ ZYNQID(0x11), ZYNQMASK, 6, "xc7x045" },
-	{ 0x13631093, 0xFFFFFFFF, 6, "xc7a100t" },
+	// { 0x4ba00477, 0xFFFFFFFF, 4, "Cortex A9" },
+	// { ZYNQID(0x02), ZYNQMASK, 6, "xc7x010" },
+	// { ZYNQID(0x1b), ZYNQMASK, 6, "xc7x015" },
+	// { ZYNQID(0x07), ZYNQMASK, 6, "xc7x020" },
+	// { ZYNQID(0x0c), ZYNQMASK, 6, "xc7x030" },
+	// { ZYNQID(0x11), ZYNQMASK, 6, "xc7x045" },
+	// { 0x13631093, 0xFFFFFFFF, 6, "xc7a100t" },
+	{0x10030001, 0xFFFFFFFF, 5, "X30T"}
 };
 
 struct device_info *identify_device(u32 idcode) {
@@ -82,9 +87,26 @@ struct jtag_handle {
 	u32 active_idcode;
 
 	u32 iface;
+	u32 endianess;
+	u8 tris;
+	u8 gpio;
+	u8 trish;
+	u8 gpioh;
+
+	u32 clock_freq;
 };
 
-static int usb_open(JTAG *jtag, unsigned vid, unsigned pid, unsigned iface) {
+/* Convert a frequency to a clock divisor */
+static uint16_t freq2div(uint32_t system_clock, uint32_t freq) {
+	return (((system_clock / freq) / 2) - 1);
+}
+
+/* Convert a clock divisor to a frequency */
+static uint32_t div2freq(uint32_t system_clock, uint16_t div) {
+	return (system_clock / ((1 + div) * 2));
+}
+
+static int usb_open(JTAG *jtag, unsigned vid, unsigned pid) {
 	struct libusb_device_handle *udev;
 
 	if (libusb_init(NULL) < 0)
@@ -95,16 +117,16 @@ static int usb_open(JTAG *jtag, unsigned vid, unsigned pid, unsigned iface) {
 		return -1;
 	}
 
-	libusb_detach_kernel_driver(udev, iface);
+	libusb_detach_kernel_driver(udev, jtag->iface);
 
-	if (libusb_claim_interface(udev, iface) < 0) {
+	if (libusb_claim_interface(udev, jtag->iface) < 0) {
 		fprintf(stderr,"cannot claim interface\n");
 		return -1;
 	}
 	jtag->udev = udev;
 	jtag->ep_in = 0x81;
 	jtag->ep_out = 0x02;
-	jtag->iface = iface;
+
 	return 0;
 }
 
@@ -215,7 +237,25 @@ static int ftdi_read(JTAG *jtag, unsigned char *buffer, int count, int timeout) 
 
 static unsigned char bitxfermask[8] = { 0x00, 0x01, 0x03, 0x07, 0x0F, 0x1F, 0x3F, 0x7F };
 
-static int jtag_move(JTAG *jtag, int count, unsigned bits){
+int jtag_purge_rx_buffer(JTAG *jtag) {
+    unsigned char buf[64];
+    int r, xfer;
+    int i;
+
+    r = libusb_bulk_transfer(jtag->udev, jtag->ep_in, buf, sizeof(buf), &xfer, 1000);
+	if (r < 0) {
+		fprintf(stderr,"flush: error: %d\n", r);
+		return r;
+	}
+#if TRACE_USB
+    if (xfer > 2) {
+        dump("flush", buf, xfer);
+    }
+#endif
+    return r;
+}
+
+int jtag_move(JTAG *jtag, int count, unsigned bits) {
 	unsigned char buf[1024];
 	unsigned char *p = buf;
 	unsigned xfer;
@@ -257,6 +297,7 @@ int _jtag_shift(JTAG *jtag, int count, u64 bits, u64 *out,
 	unsigned char buf[1024];
 	unsigned char *p = buf;
 	unsigned xfer, bytes, readbytes, iobytes, readbits;
+	int cnt = count;
 
 	if (count > 64)
 		return -1;
@@ -300,7 +341,11 @@ int _jtag_shift(JTAG *jtag, int count, u64 bits, u64 *out,
 
 	if (bytes) {
 		count -= (bytes * 8);
-		*p++ = out ? 0x39 : 0x19;
+		if (jtag->endianess == LSB) {
+			*p++ = out ? 0x39 : 0x19;
+		} else {
+			*p++ = out ? 0x31 : 0x11;
+		}
 		*p++ = bytes - 1;
 		*p++ = 0;
 		while (bytes > 0) {
@@ -312,7 +357,11 @@ int _jtag_shift(JTAG *jtag, int count, u64 bits, u64 *out,
 	readbits = count;
 	while (count > 0) {
 		xfer = (count > 6) ? 6 : count;
-		*p++ = out ? 0x3b : 0x1b;
+		if (jtag->endianess == LSB) {
+			*p++ = out ? 0x3b : 0x1b;
+		} else {
+			*p++ = out ? 0x33 : 0x13;
+		}
 		*p++ = xfer - 1;
 		*p++ = bits & bitxfermask[xfer];
 		bits >>= xfer;
@@ -359,8 +408,108 @@ int _jtag_shift(JTAG *jtag, int count, u64 bits, u64 *out,
 			n |= (bit << shift);
 		}
 		*out = n;
+
+#if TRACE_JTAG
+        {
+            u64 tmp = n;
+		    int i;
+
+            fprintf(stderr,"TDO -> ");
+            for (i = 0; i < cnt; i++) {
+			    fprintf(stderr,"%c", (tmp & 1) ? '1' : '0');
+			    tmp >>= 1;
+		    }
+
+            fprintf(stderr,"\n");
+        }
+#endif
 	}
 	return 0;
+}
+
+int jtag_set_clock_freq(JTAG *jtag, u32 freq) {
+	uint32_t system_clock;
+	uint16_t divisor;
+	unsigned char buf[3];
+
+	if(freq > SIX_MHZ) {
+		buf[0] = 0x8a;
+		system_clock = SIXTY_MHZ;
+	} else {
+		buf[0] = 0x8b;
+		system_clock = TWELVE_MHZ;
+	}
+
+	if (usb_bulk(jtag->udev, jtag->ep_out, buf, 1, 1000) != 1)
+		return -1;
+
+	if (freq <= 0) {
+		divisor = 0xFFFF;
+	} else {
+		divisor = freq2div(system_clock, freq);
+	}
+
+	buf[0] = 0x86;
+	buf[1] = (divisor & 0xFF);
+	buf[2] = ((divisor >> 8) & 0xFF);
+
+	if (usb_bulk(jtag->udev, jtag->ep_out, buf, 3, 1000) != 3)
+		return -1;
+
+	jtag->clock_freq = div2freq(system_clock, divisor);
+	return 0;
+}
+
+static int jtag_gpio_set_bits_low(JTAG *jtag) {
+	unsigned char buf[3];
+	buf[0] = 0x80;
+	buf[1] = jtag->gpio;
+	buf[2] = jtag->tris;
+	if (usb_bulk(jtag->udev, jtag->ep_out, buf, 3, 1000) != 3)
+		return -1;
+	return 0;
+}
+
+static int jtag_gpio_set_bits_high(JTAG *jtag) {
+	unsigned char buf[3];
+	buf[0] = 0x82;
+	buf[1] = jtag->gpioh;
+	buf[2] = jtag->trish;
+	if (usb_bulk(jtag->udev, jtag->ep_out, buf, 3, 1000) != 3)
+		return -1;
+	return 0;
+}
+
+int jtag_set_gpio_dir_state(JTAG *jtag, u16 direction, u16 state) {
+	jtag->tris = direction;
+	jtag->gpio = state;
+	if (jtag_gpio_set_bits_low(jtag))
+		return -1;
+	jtag->trish = direction >> 8;
+	jtag->gpioh = state >> 8;
+	if (jtag_gpio_set_bits_high(jtag))
+		return -1;
+	return 0;
+}
+
+int jtag_gpio_write(JTAG *jtag, u16 pins, u16 state) {
+	if (pins & 0xff) {
+		jtag->gpio &= ~pins;
+		jtag->gpio |= (pins & state);
+		if (jtag_gpio_set_bits_low(jtag))
+			return -1;
+	}
+	if (pins >> 8) {
+		jtag->gpioh &= ~(pins >> 8);
+		jtag->gpioh |= ((pins >> 8) & state);
+		if (jtag_gpio_set_bits_high(jtag))
+			return -1;
+	}
+	return 0;
+}
+
+void jtag_set_endianness(JTAG *jtag, u32 endianness) {
+	jtag->endianess = endianness;
 }
 
 #define ONES(n) (0x7FFFFFFFFFFFFFFFULL >> (63 - (n)))
@@ -406,15 +555,15 @@ static int jtag_shift_ir(JTAG *jtag, int count, u64 bits,
  * ShiftIR -> UpdateIR -> RTI: 110
  */
 
-#define MOVE_NONE		0,0
-#define MOVE_ANY_TO_RESET_IDLE	8,0b01111111
-#define MOVE_IDLE_TO_SHIFTDR	3,0b001
-#define MOVE_IDLE_TO_SHIFTIR	4,0b0011
-#define MOVE_SHIFTxR_TO_IDLE	3,0b011
+// #define MOVE_NONE		0,0
+// #define MOVE_ANY_TO_RESET_IDLE	8,0b01111111
+// #define MOVE_IDLE_TO_SHIFTDR	3,0b001
+// #define MOVE_IDLE_TO_SHIFTIR	4,0b0011
+// #define MOVE_SHIFTxR_TO_IDLE	3,0b011
 
 
 void jtag_close(JTAG *jtag) {
-	if (jtag) {
+	if (!jtag) {
 		return;
 	}
 
@@ -426,21 +575,24 @@ void jtag_close(JTAG *jtag) {
 
 static unsigned char mpsse_init[] = {
 	0x85, // loopback off
-	0x8a, // disable clock/5
-	0x86, 0x01, 0x00, // set divisor
-	0x80, 0xe8, 0xeb, // set low state and dir
-	0x82, 0x20, 0x30, // set high state and dir
+	0x8b, // enable clock/5
+	0x86, 0x01, 0x00, // set divisor (effectively yield 3Mhz)
+//	0x80, 0x08, 0x0b, // set low state and dir (TCK & TDI low, TMS high / TCK, TDI & TMS output & TDO input)
+//	0x82, 0x00, 0x00, // set high state and dir (all GPIO input)
 };
 
-JTAG *jtag_open(u32 vid, u32 pid, u32 iface) {
+JTAG *jtag_open(u32 vid, u32 pid, char *sn, u32 iface, u32 endianness) {
 	int r;
 	JTAG *jtag = malloc(sizeof(JTAG));
 	if (!jtag)
 		return NULL;
 	memset(jtag, 0, sizeof(JTAG));
 	jtag->read_size = sizeof(jtag->read_buffer);
+	jtag->iface = iface;
+	jtag->endianess = endianness;
+	jtag->clock_freq = THREE_MHZ;
 
-	r = usb_open(jtag, vid, pid, iface);
+	r = usb_open(jtag, vid, pid);
 	if (r < 0)
 		goto fail;
 	if (ftdi_reset(jtag->udev))
@@ -450,6 +602,9 @@ JTAG *jtag_open(u32 vid, u32 pid, u32 iface) {
 	if (usb_bulk(jtag->udev, jtag->ep_out,
 		mpsse_init, sizeof(mpsse_init), 1000) != sizeof(mpsse_init))
 		goto fail;
+
+	// purge ftdi rx buffer to prevent left over from previous session
+	jtag_purge_rx_buffer(jtag);
 	return jtag;
 
 fail:
@@ -597,4 +752,3 @@ int jtag_dr_io(JTAG *jtag, u32 bitcount, u64 wdata, u64 *rdata) {
 		return -1;
 	return 0;
 }
-
