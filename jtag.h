@@ -18,6 +18,18 @@
 
 #include <stdint.h>
 
+#define ONE_HUNDRED_KHZ 100000
+#define FOUR_HUNDRED_KHZ 400000
+#define ONE_MHZ 1000000
+#define TWO_MHZ 2000000
+#define THREE_MHZ 3000000
+#define FIVE_MHZ 5000000
+#define SIX_MHZ 6000000
+#define TEN_MHZ 10000000
+#define TWELVE_MHZ 12000000
+#define THIRTY_MHZ 30000000
+#define SIXTY_MHZ 60000000
+
 #define MOVE_NONE		0,0
 #define MOVE_ANY_TO_RESET_IDLE	8,0b01111111
 #define MOVE_IDLE_TO_SHIFTDR	3,0b001
@@ -53,5 +65,14 @@ int jtag_gpio_write(JTAG *jtag, u16 pins, u16 state);
 int jtag_set_clock_freq(JTAG *jtag, u32 freq);
 int jtag_purge_rx_buffer(JTAG *jtag);
 void jtag_set_endianness(JTAG *jtag, u32 endianness);
+u32 jtag_get_endianness(JTAG *jtag);
+u32 jtag_get_clock_freq(JTAG *jtag);
+
+void spi_set_cs_pins(JTAG *jtag, u16 cs_pins);
+int spi_start(JTAG *jtag);
+int spi_stop(JTAG *jtag);
+int spi_write(JTAG *jtag, char *data, int nbytes);
+int spi_read(JTAG *jtag, char *output, int nbytes);
+int spi_exchange(JTAG *jtag, char *data, char *output, int nbytes);
 
 #endif
