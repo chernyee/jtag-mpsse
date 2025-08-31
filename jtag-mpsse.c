@@ -828,4 +828,5 @@ int spi_read(JTAG *jtag, char *output, int nbytes) {
 
 int spi_exchange(JTAG *jtag, char *data, char *output, int nbytes) {
 	// @todo: to be implemented
+	return -1;
 }
