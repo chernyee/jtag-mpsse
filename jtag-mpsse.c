@@ -504,36 +504,59 @@ static int jtag_gpio_set_bits_high(JTAG *jtag) {
 	return 0;
 }
 
-int jtag_set_gpio_dir_state(JTAG *jtag, u16 direction, u16 state) {
+static int jtag_gpio_set_direction_and_state_low(JTAG *jtag, u8 direction, u8 state) {
 	jtag->tris = direction;
 	jtag->gpio = state;
 	if (jtag_gpio_set_bits_low(jtag))
 		return -1;
-	jtag->trish = direction >> 8;
-	jtag->gpioh = state >> 8;
+	return 0;
+}
+
+static int jtag_gpio_set_direction_and_state_high(JTAG *jtag, u8 direction, u8 state) {
+	jtag->trish = direction;
+	jtag->gpioh = state;
 	if (jtag_gpio_set_bits_high(jtag))
 		return -1;
 	return 0;
 }
 
+int jtag_gpio_set_direction_and_state(JTAG *jtag, u16 direction, u16 state) {
+	u8 tris = (u8)(direction & 0xff);
+	u8 gpio = (u8)(state & 0xff);
+	u8 trish = (u8)(direction >> 8);
+	u8 gpioh = (u8)(state >> 8);
+	if (!jtag_gpio_set_direction_and_state_low(jtag, tris, gpio))
+		if (!jtag_gpio_set_direction_and_state_high(jtag, trish, gpioh))
+			return 0;
+	return -1;
+}
+
 int jtag_gpio_write(JTAG *jtag, u16 pins, u16 state) {
-	if (pins & 0xff) {
-		jtag->gpio &= ~pins;
-		jtag->gpio |= (pins & state);
-		if (jtag_gpio_set_bits_low(jtag))
+	u8 mask_high = (u8)(pins >> 8);
+	u8 mask = (u8)(pins & 0xff);
+	u8 value_high = (u8)(state >> 8);
+	u8 value = (u8)(state & 0xff);
+
+	if (mask) {
+		jtag->gpio = (jtag->gpio & ~mask) | (value & mask);
+		if (jtag_gpio_set_bits_low(jtag)) {
 			return -1;
+		}
 	}
-	if (pins >> 8) {
-		jtag->gpioh &= ~(pins >> 8);
-		jtag->gpioh |= ((pins >> 8) & state);
-		if (jtag_gpio_set_bits_high(jtag))
+
+	if (mask_high) {
+		jtag->gpioh = (jtag->gpioh & ~mask_high) | (value_high & mask_high);
+		if (jtag_gpio_set_bits_high(jtag)) {
 			return -1;
+		}
 	}
+
 	return 0;
 }
 
-void jtag_set_endianness(JTAG *jtag, u32 endianness) {
+int jtag_set_endianness(JTAG *jtag, u32 endianness) {
 	jtag->endianness = endianness;
+	return 0;
 }
 
 #define ONES(n) (0x7FFFFFFFFFFFFFFFULL >> (63 - (n)))
@@ -780,8 +803,9 @@ int jtag_dr_io(JTAG *jtag, u32 bitcount, u64 wdata, u64 *rdata) {
 	return 0;
 }
 
-void spi_set_cs_pins(JTAG *jtag, u16 cs_pins) {
-	jtag->cs_pins = cs_pins;
+int spi_set_cs_pinmask(JTAG *jtag, u16 pinmask) {
+	jtag->cs_pins = pinmask;
+	return 0;
 }
 
 int spi_start(JTAG *jtag) {

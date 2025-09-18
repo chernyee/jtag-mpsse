@@ -63,15 +63,15 @@ int jtag_dr_io(JTAG *jtag, u32 bitcount, u64 wdata, u64 *rdata);
 int jtag_move(JTAG *jtag, int count, unsigned bits);
 int _jtag_shift(JTAG *jtag, int count, u64 bits, u64 *out, int movecount, unsigned movebits);
 
-int jtag_set_gpio_dir_state(JTAG *jtag, u16 direction, u16 state);
+int jtag_gpio_set_direction_and_state(JTAG *jtag, u16 direction, u16 state);
 int jtag_gpio_write(JTAG *jtag, u16 pins, u16 state);
 int jtag_set_clock_freq(JTAG *jtag, u32 freq);
 int jtag_purge_rx_buffer(JTAG *jtag);
-void jtag_set_endianness(JTAG *jtag, u32 endianness);
+int jtag_set_endianness(JTAG *jtag, u32 endianness);
 u32 jtag_get_endianness(JTAG *jtag);
 u32 jtag_get_clock_freq(JTAG *jtag);
 
-void spi_set_cs_pins(JTAG *jtag, u16 cs_pins);
+int spi_set_cs_pinmask(JTAG *jtag, u16 pinmask);
 int spi_start(JTAG *jtag);
 int spi_stop(JTAG *jtag);
 int spi_write(JTAG *jtag, char *data, int nbytes);
